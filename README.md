@@ -1,0 +1,2 @@
+# AIGenScientificPaperDetection
+AI-generated scientific misinformation
