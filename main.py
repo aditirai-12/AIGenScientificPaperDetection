@@ -10,7 +10,7 @@ import transformers
 from transformers import AutoModel, BertTokenizerFast
 
 # specify GPU
-device = torch.device("cuda")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #load datasets and create dataframe
 train_df = pd.read_csv('cse-472-project-ii-ai-generated-text-detection/train.csv')
@@ -21,14 +21,24 @@ test_df = pd.read_csv('cse-472-project-ii-ai-generated-text-detection/test.csv')
 train_df['text'] = 'Title: ' + train_df['title'] + ' Abstract: ' + train_df['abstract'] + ' Introduction: ' + train_df['introduction']
 test_df['text'] = 'Title: ' + test_df['title'] + ' Abstract: ' + test_df['abstract'] + ' Introduction: ' + test_df['introduction']
 
-#preprocessing 
-train_x = train_df['text']
-train_y = train_df['label']
+#split training data into train and validation sets
+train_x, val_x, train_y, val_y = train_test_split(train_df['text'], train_df['label'], test_size=0.2, random_state=42)
 test_x = test_df['text']
 
-# import BERT-base pretrained model
+#import BERT-base pretrained model
 bert = AutoModel.from_pretrained('bert-base-uncased')
 
-# Load the BERT tokenizer
+#load BERT tokenizer
 tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
+
+#data prep
+
+#create datasets and dataloaders
+
+#model architecture
+
+#training
+
+#evaluation
+
 
