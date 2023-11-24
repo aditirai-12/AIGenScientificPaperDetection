@@ -108,5 +108,13 @@ class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(
 print("Class weights: ", class_weights)
 
 #converting class weights to tensors
+tensor_class_weights = torch.tensor(class_weights, dtype=torch.float)
+tensor_class_weights = tensor_class_weights.to(device)
+
+#loss function
+cross_entropy = nn.NLLLoss(weight=tensor_class_weights)
+epochs = 15
+
+#training time
 
 
