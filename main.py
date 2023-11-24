@@ -4,10 +4,12 @@ from sklearn import decomposition, ensemble
 import pandas as pd, numpy as np, string
 import torch
 import torch.nn as nn
+from torch.optim import AdamW
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
+from sklearn.utils.class_weight import compute_class_weight
 import transformers
-from transformers import AutoModel, BertTokenizerFast, AdamW
+from transformers import AutoModel, BertTokenizerFast
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
 #specify GPU or CPU
@@ -35,7 +37,7 @@ tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 #tokenize and enocde text in training set
 tokens_train = tokenizer.batch_encode_plus(train_text.tolist(), max_length=512, padding=True, truncation=False)
 
-#tokenize and encode text in validation set
+#tokenize and en dccode text in validation set
 tokens_val = tokenizer.batch_encode_plus(val_text.tolist(), max_length=512, padding=True, truncation=False)
 
 #tokenize and encode text in test set
@@ -96,4 +98,15 @@ model = BERTArchitecture(bert)
 
 #model to device indicated in beginning of code
 model = model.to(device)
+
+#AdamW optimizer
+optimizer = AdamW(model.parameters(), lr=1e-5)
+
+#compute class weights
+class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(train_label), y=train_label)
+
+print("Class weights: ", class_weights)
+
+#converting class weights to tensors
+
 
