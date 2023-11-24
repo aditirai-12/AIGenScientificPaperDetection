@@ -10,6 +10,7 @@ from sklearn.metrics import classification_report
 from sklearn.utils.class_weight import compute_class_weight
 import transformers
 from transformers import AutoModel, BertTokenizerFast
+from transformers import DistilBertTokenizerFast, DistilBertModel
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
 #specify GPU or CPU
@@ -28,20 +29,17 @@ test_df['text'] = 'Title: ' + test_df['title'] + ' Abstract: ' + test_df['abstra
 train_text, val_text, train_label, val_label = train_test_split(train_df['text'], train_df['label'], test_size=0.2, random_state=42)
 test_text = test_df['text']
 
-#import BERT-base pretrained model
-bert = AutoModel.from_pretrained('bert-base-uncased')
-
-#load BERT tokenizer
-tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
+tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
 
 #tokenize and enocde text in training set
-tokens_train = tokenizer.batch_encode_plus(train_text.tolist(), max_length=512, padding=True, truncation=False)
+tokens_train = tokenizer.batch_encode_plus(train_text.tolist(), max_length=512, padding=True, truncation=True)
 
 #tokenize and en dccode text in validation set
-tokens_val = tokenizer.batch_encode_plus(val_text.tolist(), max_length=512, padding=True, truncation=False)
+tokens_val = tokenizer.batch_encode_plus(val_text.tolist(), max_length=512, padding=True, truncation=True)
 
 #tokenize and encode text in test set
-tokens_test = tokenizer.batch_encode_plus(test_text.tolist(), max_length=512, padding=True, truncation=False)
+tokens_test = tokenizer.batch_encode_plus(test_text.tolist(), max_length=512, padding=True, truncation=True)
 
 #convert lists to tensors
 train_seq = torch.tensor(tokens_train['input_ids'])
@@ -54,6 +52,7 @@ val_y = torch.tensor(val_label.tolist())
 
 test_seq = torch.tensor(tokens_test['input_ids'])
 test_mask = torch.tensor(tokens_test['attention_mask'])
+
 
 #wrap training tensors
 train_data = TensorDataset(train_seq, train_mask, train_y)
@@ -84,14 +83,14 @@ class BERTArchitecture(nn.Module):
         self.bert = bert
         self.dropout = nn.Dropout(0.1)
         self.fc = nn.Linear(768, 1)
-        self.sigmoid = nn.Sigmoid()
 
     def forward(self, sent_id, mask):
-        _, cls_hs = self.bert(sent_id, attention_mask=mask, return_dict=False)
+        seq_output = self.bert(sent_id, attention_mask=mask)[0] 
+        cls_hs = seq_output[:, 0, :] 
         x = self.dropout(cls_hs)
         x = self.fc(x)
-        x = self.sigmoid(x)
-        return x 
+        return x
+
 
 #pass the pre-trained BERT to BERTArchitecture()
 model = BERTArchitecture(bert)
@@ -107,14 +106,106 @@ class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(
 
 print("Class weights: ", class_weights)
 
-#converting class weights to tensors
-tensor_class_weights = torch.tensor(class_weights, dtype=torch.float)
-tensor_class_weights = tensor_class_weights.to(device)
+positive_class_weight = torch.tensor([class_weights[1]], dtype=torch.float)
+positive_class_weight = positive_class_weight.to(device)
 
-#loss function
-cross_entropy = nn.NLLLoss(weight=tensor_class_weights)
+# Initialize the loss function
+cross_entropy = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
 epochs = 15
 
-#training time
+#training func
+def train():
+    
+    model.train()
+    print("Hit")
+    total_loss, total_accuracy = 0, 0
+    total_preds=[]
+  
+    for step,batch in enumerate(train_dataloader):
+        if step % 50 == 0 and not step == 0:
+            print('  Batch {:>5,}  of  {:>5,}.'.format(step, len(train_dataloader)))
+        batch = [r.to(device) for r in batch]
+        sent_id, mask, labels = batch
+        model.zero_grad()        
+        preds = model(sent_id, mask)
+        labels = labels.unsqueeze(1).float()
+        loss = cross_entropy(preds, labels)
+        total_loss = total_loss + loss.item()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        preds = preds.detach().cpu().numpy()
 
+    total_preds.append(preds)
+    avg_loss = total_loss / len(train_dataloader)
+    total_preds  = np.concatenate(total_preds, axis=0)
+    return avg_loss, total_preds
 
+#eval func
+def evaluate():
+    
+    print("\nEvaluating...")
+    model.eval()
+    total_loss, total_accuracy = 0, 0
+    total_preds = []
+
+    for step,batch in enumerate(val_dataloader):
+        if step % 50 == 0 and not step == 0:
+            print('  Batch {:>5,}  of  {:>5,}.'.format(step, len(val_dataloader)))
+        batch = [t.to(device) for t in batch]
+        sent_id, mask, labels = batch
+        with torch.no_grad():
+            preds = model(sent_id, mask)
+            loss = cross_entropy(preds,labels)
+            total_loss = total_loss + loss.item()
+            preds = preds.detach().cpu().numpy()
+            total_preds.append(preds)
+
+    avg_loss = total_loss / len(val_dataloader) 
+    total_preds  = np.concatenate(total_preds, axis=0)
+    return avg_loss, total_preds
+
+#training the model
+best_valid_loss = float('inf')
+# empty lists to store training and validation loss of each epoch
+train_losses=[]
+valid_losses=[]
+
+for epoch in range(epochs):
+     
+    print('\n Epoch {:} / {:}'.format(epoch + 1, epochs))
+    
+    #train model
+    print("Training:... \n")
+    train_loss, _ = train()
+    #evaluate model
+    valid_loss, _ = evaluate()
+    
+    #save the best model
+    if valid_loss < best_valid_loss:
+        best_valid_loss = valid_loss
+        torch.save(model.state_dict(), 'saved_weights.pt')
+    
+    # append training and validation loss
+    train_losses.append(train_loss)
+    valid_losses.append(valid_loss)
+    
+    print(f'\nTraining Loss: {train_loss:.3f}')
+    print(f'Validation Loss: {valid_loss:.3f}')
+
+# get predictions for test data
+with torch.no_grad():
+    preds = model(test_seq.to(device), test_mask.to(device))
+    preds = preds.detach().cpu().numpy()
+
+test_ids = test_df['ID']
+# model's performance
+preds = np.argmax(preds, axis = 1)
+# Create a DataFrame for submission
+submission_df = pd.DataFrame({
+    'ID': test_ids,
+    'label': preds
+})
+
+# Export the DataFrame to a CSV file
+submission_df.to_csv('submission.csv', index=False)
