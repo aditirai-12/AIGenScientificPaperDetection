@@ -12,6 +12,8 @@ import transformers
 from transformers import AutoModel, BertTokenizerFast
 from transformers import DistilBertTokenizerFast, DistilBertModel
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from torch.cuda.amp import autocast, GradScaler
+
 
 #specify GPU or CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -33,13 +35,13 @@ tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
 
 #tokenize and enocde text in training set
-tokens_train = tokenizer.batch_encode_plus(train_text.tolist(), max_length=512, padding=True, truncation=True)
+tokens_train = tokenizer.batch_encode_plus(train_text.tolist(), max_length=256, padding=True, truncation=True)
 
 #tokenize and en dccode text in validation set
-tokens_val = tokenizer.batch_encode_plus(val_text.tolist(), max_length=512, padding=True, truncation=True)
+tokens_val = tokenizer.batch_encode_plus(val_text.tolist(), max_length=256, padding=True, truncation=True)
 
 #tokenize and encode text in test set
-tokens_test = tokenizer.batch_encode_plus(test_text.tolist(), max_length=512, padding=True, truncation=True)
+tokens_test = tokenizer.batch_encode_plus(test_text.tolist(), max_length=256, padding=True, truncation=True)
 
 #convert lists to tensors
 train_seq = torch.tensor(tokens_train['input_ids'])
@@ -61,7 +63,7 @@ train_data = TensorDataset(train_seq, train_mask, train_y)
 train_sample = RandomSampler(train_data)
 
 #dataloader for training dataset
-train_dataloader = DataLoader(train_data, sampler=train_sample, batch_size=16)
+train_dataloader = DataLoader(train_data, sampler=train_sample, batch_size=10, num_workers=4)
 
 #wrap validation tensors
 val_data = TensorDataset(val_seq, val_mask, val_y)
@@ -111,13 +113,12 @@ positive_class_weight = positive_class_weight.to(device)
 
 # Initialize the loss function
 cross_entropy = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
-epochs = 15
+epochs = 1
 
 #training func
 def train():
     
     model.train()
-    print("Hit")
     total_loss, total_accuracy = 0, 0
     total_preds=[]
   
@@ -135,6 +136,9 @@ def train():
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         preds = preds.detach().cpu().numpy()
+
+        if device == torch.device("cuda"):
+            torch.cuda.empty_cache()
 
     total_preds.append(preds)
     avg_loss = total_loss / len(train_dataloader)
@@ -156,10 +160,14 @@ def evaluate():
         sent_id, mask, labels = batch
         with torch.no_grad():
             preds = model(sent_id, mask)
+            labels = labels.unsqueeze(1).float()
             loss = cross_entropy(preds,labels)
             total_loss = total_loss + loss.item()
             preds = preds.detach().cpu().numpy()
             total_preds.append(preds)
+    
+    if device == torch.device("cuda"):
+            torch.cuda.empty_cache()
 
     avg_loss = total_loss / len(val_dataloader) 
     total_preds  = np.concatenate(total_preds, axis=0)
@@ -176,7 +184,6 @@ for epoch in range(epochs):
     print('\n Epoch {:} / {:}'.format(epoch + 1, epochs))
     
     #train model
-    print("Training:... \n")
     train_loss, _ = train()
     #evaluate model
     valid_loss, _ = evaluate()
