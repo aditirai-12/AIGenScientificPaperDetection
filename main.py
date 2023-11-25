@@ -12,108 +12,9 @@ import transformers
 from transformers import AutoModel, BertTokenizerFast
 from transformers import DistilBertTokenizerFast, DistilBertModel
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
-from torch.cuda.amp import autocast, GradScaler
-
 
 #specify GPU or CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-#load datasets and create dataframe
-train_df = pd.read_csv('cse-472-project-ii-ai-generated-text-detection/train.csv')
-test_df = pd.read_csv('cse-472-project-ii-ai-generated-text-detection/test.csv')
-
-
-#concatenating title, abstract, and introduction columns into one column with all text
-train_df['text'] = 'Title: ' + train_df['title'] + ' Abstract: ' + train_df['abstract'] + ' Introduction: ' + train_df['introduction']
-test_df['text'] = 'Title: ' + test_df['title'] + ' Abstract: ' + test_df['abstract'] + ' Introduction: ' + test_df['introduction']
-
-#split training data into train and validation sets
-train_text, val_text, train_label, val_label = train_test_split(train_df['text'], train_df['label'], test_size=0.2, random_state=42)
-test_text = test_df['text']
-
-tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
-bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
-
-#tokenize and enocde text in training set
-tokens_train = tokenizer.batch_encode_plus(train_text.tolist(), max_length=256, padding=True, truncation=True)
-
-#tokenize and en dccode text in validation set
-tokens_val = tokenizer.batch_encode_plus(val_text.tolist(), max_length=256, padding=True, truncation=True)
-
-#tokenize and encode text in test set
-tokens_test = tokenizer.batch_encode_plus(test_text.tolist(), max_length=256, padding=True, truncation=True)
-
-#convert lists to tensors
-train_seq = torch.tensor(tokens_train['input_ids'])
-train_mask = torch.tensor(tokens_train['attention_mask'])
-train_y = torch.tensor(train_label.tolist())
-
-val_seq = torch.tensor(tokens_val['input_ids'])
-val_mask = torch.tensor(tokens_val['attention_mask'])
-val_y = torch.tensor(val_label.tolist())
-
-test_seq = torch.tensor(tokens_test['input_ids'])
-test_mask = torch.tensor(tokens_test['attention_mask'])
-
-
-#wrap training tensors
-train_data = TensorDataset(train_seq, train_mask, train_y)
-
-#sample data during training
-train_sample = RandomSampler(train_data)
-
-#dataloader for training dataset
-train_dataloader = DataLoader(train_data, sampler=train_sample, batch_size=10, num_workers=4)
-
-#wrap validation tensors
-val_data = TensorDataset(val_seq, val_mask, val_y)
-
-#sample validation data
-val_sample = RandomSampler(val_data)
-
-#dataloader for validation dataset
-val_dataloader = DataLoader(val_data, sampler=val_sample, batch_size=16)
-
-#set params of BERT model to not require gradients so only params of added layers trained
-for param in bert.parameters():
-    param.requires_grad = False
-
-class BERTArchitecture(nn.Module):
-
-    def __init__(self, bert):
-        super(BERTArchitecture, self).__init__()
-        self.bert = bert
-        self.dropout = nn.Dropout(0.1)
-        self.fc = nn.Linear(768, 1)
-
-    def forward(self, sent_id, mask):
-        seq_output = self.bert(sent_id, attention_mask=mask)[0] 
-        cls_hs = seq_output[:, 0, :] 
-        x = self.dropout(cls_hs)
-        x = self.fc(x)
-        return x
-
-
-#pass the pre-trained BERT to BERTArchitecture()
-model = BERTArchitecture(bert)
-
-#model to device indicated in beginning of code
-model = model.to(device)
-
-#AdamW optimizer
-optimizer = AdamW(model.parameters(), lr=1e-5)
-
-#compute class weights
-class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(train_label), y=train_label)
-
-print("Class weights: ", class_weights)
-
-positive_class_weight = torch.tensor([class_weights[1]], dtype=torch.float)
-positive_class_weight = positive_class_weight.to(device)
-
-# Initialize the loss function
-cross_entropy = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
-epochs = 1
 
 #training func
 def train():
@@ -171,7 +72,112 @@ def evaluate():
 
     avg_loss = total_loss / len(val_dataloader) 
     total_preds  = np.concatenate(total_preds, axis=0)
+
+    # In your evaluate function or after getting predictions
+    with torch.no_grad():
+        sample_output = model(val_seq[:5].to(device), val_mask[:5].to(device))
+        print("Sample raw outputs:", sample_output.sigmoid())  # Use sigmoid to get probabilities
+
     return avg_loss, total_preds
+
+#load datasets and create dataframe
+train_df = pd.read_csv('cse-472-project-ii-ai-generated-text-detection/train.csv')
+test_df = pd.read_csv('cse-472-project-ii-ai-generated-text-detection/test.csv')
+
+# Right after loading train_df and test_df
+print("Train label distribution:\n", train_df['label'].value_counts())
+
+#concatenating title, abstract, and introduction columns into one column with all text
+train_df['text'] = 'Title: ' + train_df['title'] + ' Abstract: ' + train_df['abstract'] + ' Introduction: ' + train_df['introduction']
+test_df['text'] = 'Title: ' + test_df['title'] + ' Abstract: ' + test_df['abstract'] + ' Introduction: ' + test_df['introduction']
+
+#split training data into train and validation sets
+train_text, val_text, train_label, val_label = train_test_split(train_df['text'], train_df['label'], test_size=0.2, random_state=42)
+test_text = test_df['text']
+
+tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
+
+#tokenize and enocde text in training set
+tokens_train = tokenizer.batch_encode_plus(train_text.tolist(), max_length=160, padding=True, truncation=True)
+# After tokens_train is defined
+print("Tokenized sample:", tokens_train['input_ids'][0])
+
+#tokenize and en dccode text in validation set
+tokens_val = tokenizer.batch_encode_plus(val_text.tolist(), max_length=160, padding=True, truncation=True)
+
+#tokenize and encode text in test set
+tokens_test = tokenizer.batch_encode_plus(test_text.tolist(), max_length=160, padding=True, truncation=True)
+
+#convert lists to tensors
+train_seq = torch.tensor(tokens_train['input_ids'])
+train_mask = torch.tensor(tokens_train['attention_mask'])
+train_y = torch.tensor(train_label.tolist())
+
+val_seq = torch.tensor(tokens_val['input_ids'])
+val_mask = torch.tensor(tokens_val['attention_mask'])
+val_y = torch.tensor(val_label.tolist())
+
+test_seq = torch.tensor(tokens_test['input_ids'])
+test_mask = torch.tensor(tokens_test['attention_mask'])
+
+
+#wrap training tensors
+train_data = TensorDataset(train_seq, train_mask, train_y)
+
+#sample data during training
+train_sample = RandomSampler(train_data)
+
+#dataloader for training dataset
+train_dataloader = DataLoader(train_data, sampler=train_sample, batch_size=10)
+
+#wrap validation tensors
+val_data = TensorDataset(val_seq, val_mask, val_y)
+
+#sample validation data
+val_sample = RandomSampler(val_data)
+
+#dataloader for validation dataset
+val_dataloader = DataLoader(val_data, sampler=val_sample, batch_size=16)
+
+#set params of BERT model to not require gradients so only params of added layers trained
+for param in bert.parameters():
+    param.requires_grad = False
+
+class BERTArchitecture(nn.Module):
+
+    def __init__(self, bert, unfreeze_last_n=3):
+        super(BERTArchitecture, self).__init__()
+        self.bert = bert
+        for param in list(self.bert.parameters())[-unfreeze_last_n:]:
+            param.requires_grad = True
+        self.dropout = nn.Dropout(0.1)
+        self.fc = nn.Linear(768, 1)
+
+    def forward(self, sent_id, mask):
+        seq_output = self.bert(sent_id, attention_mask=mask)[0] 
+        cls_hs = seq_output[:, 0, :] 
+        x = self.dropout(cls_hs)
+        x = self.fc(x)
+        return x
+
+
+#pass the pre-trained BERT to BERTArchitecture()
+model = BERTArchitecture(bert,  unfreeze_last_n=5)
+model = model.to(device)
+optimizer = AdamW(model.parameters(), lr=0.00001)
+
+#compute class weights
+class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(train_label), y=train_label)
+
+print("Class weights: ", class_weights)
+
+positive_class_weight = torch.tensor([class_weights[1]], dtype=torch.float)
+positive_class_weight = positive_class_weight.to(device)
+
+# Initialize the loss function
+cross_entropy = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
+epochs = 15
 
 #training the model
 best_valid_loss = float('inf')
@@ -204,10 +210,11 @@ for epoch in range(epochs):
 with torch.no_grad():
     preds = model(test_seq.to(device), test_mask.to(device))
     preds = preds.detach().cpu().numpy()
+    preds = (preds > 0.5).astype(int)  # Apply threshold
+    preds = preds.flatten()  # Flatten the array to 1D
 
 test_ids = test_df['ID']
-# model's performance
-preds = np.argmax(preds, axis = 1)
+
 # Create a DataFrame for submission
 submission_df = pd.DataFrame({
     'ID': test_ids,

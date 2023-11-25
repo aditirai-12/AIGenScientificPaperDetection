@@ -1,0 +1,5 @@
+scikit-learn==[1.2.2]
+pandas==[2.1.1]
+numpy==[1.24.3]
+torch==[2.1.1]
+transformers==[4.32.1]
